@@ -20,6 +20,7 @@ static void ngx_ssl_info_callback(const ngx_ssl_conn_t *ssl_conn, int where,
     int ret);
 static void ngx_ssl_handshake_handler(ngx_event_t *ev);
 static ngx_int_t ngx_ssl_handle_recv(ngx_connection_t *c, int n);
+static ngx_int_t ngx_ssl_handle_key_ex(ngx_connection_t *c);
 static void ngx_ssl_write_handler(ngx_event_t *wev);
 static void ngx_ssl_read_handler(ngx_event_t *rev);
 static void ngx_ssl_shutdown_handler(ngx_event_t *ev);
@@ -84,6 +85,7 @@ int  ngx_ssl_server_conf_index;
 int  ngx_ssl_session_cache_index;
 int  ngx_ssl_certificate_index;
 int  ngx_ssl_stapling_index;
+int  ngx_ssl_key_ex_cb_index;
 
 
 ngx_int_t
@@ -150,6 +152,14 @@ ngx_ssl_init(ngx_log_t *log)
     ngx_ssl_stapling_index = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL,
                                                       NULL);
     if (ngx_ssl_stapling_index == -1) {
+        ngx_ssl_error(NGX_LOG_ALERT, log, 0,
+                      "SSL_CTX_get_ex_new_index() failed");
+        return NGX_ERROR;
+    }
+
+    ngx_ssl_key_ex_cb_index = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL,
+                                                       NULL);
+    if (ngx_ssl_key_ex_cb_index == -1) {
         ngx_ssl_error(NGX_LOG_ALERT, log, 0,
                       "SSL_CTX_get_ex_new_index() failed");
         return NGX_ERROR;
@@ -799,6 +809,10 @@ ngx_ssl_handshake(ngx_connection_t *c)
 
     ngx_log_debug1(NGX_LOG_DEBUG_EVENT, c->log, 0, "SSL_get_error: %d", sslerr);
 
+    if (sslerr == SSL_ERROR_WANT_RSA_DECRYPT || sslerr == SSL_ERROR_WANT_SIGN) {
+       return ngx_ssl_handle_key_ex(c);
+    }
+
     if (sslerr == SSL_ERROR_WANT_READ) {
         c->read->ready = 0;
         c->read->handler = ngx_ssl_handshake_handler;
@@ -1048,6 +1062,11 @@ ngx_ssl_handle_recv(ngx_connection_t *c, int n)
 
     ngx_log_debug1(NGX_LOG_DEBUG_EVENT, c->log, 0, "SSL_get_error: %d", sslerr);
 
+    /* Handle async key ex */
+    if (sslerr == SSL_ERROR_WANT_RSA_DECRYPT || sslerr == SSL_ERROR_WANT_SIGN) {
+      return ngx_ssl_handle_key_ex(c);
+    }
+
     if (sslerr == SSL_ERROR_WANT_READ) {
         c->read->ready = 0;
         return NGX_AGAIN;
@@ -1088,6 +1107,32 @@ ngx_ssl_handle_recv(ngx_connection_t *c, int n)
     ngx_ssl_connection_error(c, sslerr, err, "SSL_read() failed");
 
     return NGX_ERROR;
+}
+
+
+ngx_int_t ngx_ssl_handle_key_ex(ngx_connection_t *c) {
+    ngx_int_t err;
+    SSL *ssl;
+    ngx_ssl_key_ex_cb cb;
+
+    if (c->ssl->in_key_ex) {
+        return NGX_AGAIN;
+    }
+    c->ssl->in_key_ex = 1;
+
+    ssl = c->ssl->connection;
+    cb  = ngx_ssl_get_key_ex_cb(ssl->ctx);;
+    if (cb == NULL) {
+        ngx_ssl_connection_error(c, SSL_ERROR_SSL, 0, "Key Ex cb not found");
+        return NGX_ERROR;
+    }
+
+    err = cb(ssl);
+    if (err == NGX_OK) {
+        return NGX_AGAIN;
+    } else {
+        return err;
+    }
 }
 
 
@@ -1301,6 +1346,10 @@ ngx_ssl_write(ngx_connection_t *c, u_char *data, size_t size)
 
     sslerr = SSL_get_error(c->ssl->connection, n);
 
+    if (sslerr == SSL_ERROR_WANT_RSA_DECRYPT || sslerr == SSL_ERROR_WANT_SIGN) {
+      return ngx_ssl_handle_key_ex(c);
+    }
+
     err = (sslerr == SSL_ERROR_SYSCALL) ? ngx_errno : 0;
 
     ngx_log_debug1(NGX_LOG_DEBUG_EVENT, c->log, 0, "SSL_get_error: %d", sslerr);
@@ -1341,6 +1390,20 @@ ngx_ssl_write(ngx_connection_t *c, u_char *data, size_t size)
     ngx_ssl_connection_error(c, sslerr, err, "SSL_write() failed");
 
     return NGX_ERROR;
+}
+
+
+ngx_int_t ngx_ssl_supply_key_ex(ngx_connection_t *c,
+                                u_char *data,
+                                size_t size) {
+  ngx_int_t rc;
+
+  rc = SSL_supply_key_ex_data(c->ssl->connection, data, size);
+  if (rc != 1) {
+      return NGX_ERROR;
+  }
+
+  return ngx_ssl_handshake(c);
 }
 
 

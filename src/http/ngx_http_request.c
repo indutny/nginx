@@ -2208,7 +2208,7 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
                    "http finalize request: %d, \"%V?%V\" a:%d, c:%d",
                    rc, &r->uri, &r->args, r == c->data, r->main->count);
 
-    if (rc == NGX_DONE) {
+    if (rc == NGX_DONE || r->simulated) {
         ngx_http_finalize_connection(r);
         return;
     }
@@ -2471,6 +2471,12 @@ ngx_http_finalize_connection(ngx_http_request_t *r)
         }
 
         ngx_http_close_request(r, 0);
+        return;
+    }
+
+    if (r->simulated) {
+        r->connection->data = r->http_connection;
+        ngx_http_free_request(r, 0);
         return;
     }
 

@@ -48,6 +48,7 @@ typedef struct {
     unsigned                    buffer:1;
     unsigned                    no_wait_shutdown:1;
     unsigned                    no_send_shutdown:1;
+    unsigned                    in_key_ex:1;
 } ngx_ssl_connection_t;
 
 
@@ -118,6 +119,8 @@ ngx_int_t ngx_ssl_session_cache_init(ngx_shm_zone_t *shm_zone, void *data);
 ngx_int_t ngx_ssl_create_connection(ngx_ssl_t *ssl, ngx_connection_t *c,
     ngx_uint_t flags);
 
+typedef ngx_int_t (*ngx_ssl_key_ex_cb)(ngx_ssl_conn_t* c);
+
 void ngx_ssl_remove_cached_session(SSL_CTX *ssl, ngx_ssl_session_t *sess);
 ngx_int_t ngx_ssl_set_session(ngx_connection_t *c, ngx_ssl_session_t *session);
 #define ngx_ssl_get_session(c)      SSL_get1_session(c->ssl->connection)
@@ -126,6 +129,10 @@ ngx_int_t ngx_ssl_set_session(ngx_connection_t *c, ngx_ssl_session_t *session);
     SSL_get_ex_data(ssl_conn, ngx_ssl_connection_index)
 #define ngx_ssl_get_server_conf(ssl_ctx)                                      \
     SSL_CTX_get_ex_data(ssl_ctx, ngx_ssl_server_conf_index)
+#define ngx_ssl_get_key_ex_cb(ssl_ctx)                                        \
+    (ngx_ssl_key_ex_cb) SSL_CTX_get_ex_data(ssl_ctx, ngx_ssl_key_ex_cb_index)
+#define ngx_ssl_set_key_ex_cb(ssl_ctx, cb)                                    \
+    SSL_CTX_set_ex_data(ssl_ctx, ngx_ssl_key_ex_cb_index, (void*) (cb))
 
 #define ngx_ssl_verify_error_optional(n)                                      \
     (n == X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT                              \
@@ -158,6 +165,7 @@ ngx_int_t ngx_ssl_get_client_verify(ngx_connection_t *c, ngx_pool_t *pool,
 ngx_int_t ngx_ssl_handshake(ngx_connection_t *c);
 ssize_t ngx_ssl_recv(ngx_connection_t *c, u_char *buf, size_t size);
 ssize_t ngx_ssl_write(ngx_connection_t *c, u_char *data, size_t size);
+ssize_t ngx_ssl_supply_key_ex(ngx_connection_t *c, u_char *data, size_t size);
 ssize_t ngx_ssl_recv_chain(ngx_connection_t *c, ngx_chain_t *cl);
 ngx_chain_t *ngx_ssl_send_chain(ngx_connection_t *c, ngx_chain_t *in,
     off_t limit);
@@ -173,6 +181,7 @@ extern int  ngx_ssl_server_conf_index;
 extern int  ngx_ssl_session_cache_index;
 extern int  ngx_ssl_certificate_index;
 extern int  ngx_ssl_stapling_index;
+extern int  ngx_ssl_key_ex_cb_index;
 
 
 #endif /* _NGX_EVENT_OPENSSL_H_INCLUDED_ */

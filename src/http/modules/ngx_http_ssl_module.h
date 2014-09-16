@@ -49,6 +49,13 @@ typedef struct {
 
     u_char                         *file;
     ngx_uint_t                      line;
+
+    struct {
+        ngx_http_upstream_conf_t        upstream;
+        ngx_str_t                       schema;
+        ngx_url_t                       url;
+        ngx_int_t                       ssl;
+    } key_ex;
 } ngx_http_ssl_srv_conf_t;
 
 
